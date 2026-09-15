@@ -126,19 +126,19 @@ internal sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             Orientation = Orientation.Vertical,
-            SplitterWidth = 6,
-            Panel1MinSize = 260,
-            Panel2MinSize = 260
+            SplitterWidth = 6
         };
 
         Shown += async (_, _) =>
         {
-            CenterSplitter(split);
+            ConfigureSplitterAfterLayout(split);
             await RefreshGpuListAsync();
         };
         split.Resize += (_, _) =>
         {
-            if (!split.IsSplitterFixed && split.Width > split.Panel1MinSize + split.Panel2MinSize + split.SplitterWidth)
+            if (split.Width <= 0) return;
+            int minimumTotal = split.Panel1MinSize + split.Panel2MinSize + split.SplitterWidth;
+            if (!split.IsSplitterFixed && split.Width > minimumTotal)
             {
                 double ratio = split.SplitterDistance / (double)Math.Max(1, split.Width - split.SplitterWidth);
                 if (ratio < 0.25 || ratio > 0.75) CenterSplitter(split);
@@ -208,14 +208,30 @@ internal sealed class MainForm : Form
         Margin = new Padding(4, 8, 4, 0)
     };
 
+    private static void ConfigureSplitterAfterLayout(SplitContainer split)
+    {
+        int available = split.Width - split.SplitterWidth;
+        if (available <= 0) return;
+
+        const int desiredMin = 260;
+        int safeMin = Math.Min(desiredMin, Math.Max(0, (available - 2) / 2));
+        split.Panel1MinSize = safeMin;
+        split.Panel2MinSize = safeMin;
+        CenterSplitter(split);
+    }
+
     private static void CenterSplitter(SplitContainer split)
     {
         int available = split.Width - split.SplitterWidth;
         if (available <= 0) return;
-        int target = available / 2;
+
         int min = split.Panel1MinSize;
-        int max = Math.Max(min, available - split.Panel2MinSize);
-        split.SplitterDistance = Math.Clamp(target, min, max);
+        int max = available - split.Panel2MinSize;
+        if (max < min) return;
+
+        int target = Math.Clamp(available / 2, min, max);
+        if (target >= min && target <= max)
+            split.SplitterDistance = target;
     }
 
     private void WirePreviewSync()
@@ -398,7 +414,7 @@ internal sealed class MainForm : Form
             _resultView.Fit(false);
             UpdateZoomLabels();
             _saveButton.Enabled = false;
-            _status.Text = $"{Path.GetFileName(path)} · {_original.Width}×{_original.Height}";
+            _status.Text = $"{Path.GetFileName(path)}  ·  {_original.Width}×{_original.Height}";
         }
         catch (Exception ex)
         {
