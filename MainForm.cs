@@ -35,7 +35,7 @@ internal sealed class MainForm : Form
     public MainForm()
     {
         Text = "DK Image Simple Upscaler";
-        MinimumSize = new Size(1100, 680);
+        MinimumSize = new Size(820, 600);
         Size = new Size(1400, 860);
         StartPosition = FormStartPosition.CenterScreen;
         AllowDrop = true;
@@ -51,57 +51,28 @@ internal sealed class MainForm : Form
 
     private void BuildUi()
     {
-        var top = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            Height = 118,
-            Padding = new Padding(10),
-            WrapContents = true,
-            AutoSize = false
-        };
-
         var openButton = new Button { Text = "이미지 열기", AutoSize = true };
         openButton.Click += (_, _) => OpenImage();
 
-        _modeCombo.DropDownStyle = ComboBoxStyle.DropDownList;
-        _modeCombo.Width = 135;
-        _modeCombo.Items.AddRange(["Text/UI Safe", "AI General", "AI Anime"]);
-        _modeCombo.SelectedIndex = 0;
+        ConfigureCombo(_modeCombo, 138, ["Text/UI Safe", "AI General", "AI Anime"]);
         _modeCombo.SelectedIndexChanged += (_, _) => UpdateModeUi();
 
-        _sizeCombo.DropDownStyle = ComboBoxStyle.DropDownList;
-        _sizeCombo.Width = 90;
-        _sizeCombo.Items.AddRange(["2×", "3×", "4×", "FHD", "QHD", "4K"]);
-        _sizeCombo.SelectedIndex = 0;
-
-        _methodCombo.DropDownStyle = ComboBoxStyle.DropDownList;
-        _methodCombo.Width = 110;
-        _methodCombo.Items.AddRange(["Lanczos 3", "Bicubic", "Nearest"]);
-        _methodCombo.SelectedIndex = 0;
-
-        _tileCombo.DropDownStyle = ComboBoxStyle.DropDownList;
-        _tileCombo.Width = 80;
-        _tileCombo.Items.AddRange(["Auto", "128", "256", "512"]);
-        _tileCombo.SelectedIndex = 0;
+        ConfigureCombo(_sizeCombo, 92, ["2×", "3×", "4×", "FHD", "QHD", "4K"]);
+        ConfigureCombo(_methodCombo, 112, ["Lanczos 3", "Bicubic", "Nearest"]);
+        ConfigureCombo(_tileCombo, 78, ["Auto", "128", "256", "512"]);
 
         _gpuCombo.DropDownStyle = ComboBoxStyle.DropDownList;
-        _gpuCombo.Width = 245;
+        _gpuCombo.Width = 260;
         _gpuCombo.Items.Add(new GpuChoice(null, "Auto (Real-ESRGAN 기본)"));
         _gpuCombo.SelectedIndex = 0;
         _gpuCombo.SelectedIndexChanged += (_, _) => SaveGpuSelection();
 
-        _aiStrength.Minimum = 0;
-        _aiStrength.Maximum = 100;
-        _aiStrength.Value = 85;
-        _aiStrength.Width = 60;
-
-        _sharpen.Minimum = 0;
-        _sharpen.Maximum = 100;
-        _sharpen.Value = 15;
-        _sharpen.Width = 60;
+        ConfigureNumeric(_aiStrength, 0, 100, 85, 64);
+        ConfigureNumeric(_sharpen, 0, 100, 15, 64);
 
         _processButton.Text = "업스케일";
         _processButton.AutoSize = true;
+        _processButton.Font = new Font(SystemFonts.DefaultFont, FontStyle.Bold);
         _processButton.Click += async (_, _) => await ProcessAsync();
 
         _saveButton.Text = "결과 저장";
@@ -114,39 +85,64 @@ internal sealed class MainForm : Form
         _engineButton.Click += async (_, _) => await InstallEngineAsync();
 
         _engineStatus.AutoSize = true;
-        _engineStatus.Margin = new Padding(7, 7, 3, 0);
+        _engineStatus.TextAlign = ContentAlignment.MiddleLeft;
+        _engineStatus.Margin = new Padding(8, 8, 4, 0);
 
-        top.Controls.Add(openButton);
-        top.Controls.Add(MakeLabel("모드"));
-        top.Controls.Add(_modeCombo);
-        top.Controls.Add(MakeLabel("크기"));
-        top.Controls.Add(_sizeCombo);
-        top.Controls.Add(MakeLabel("방식"));
-        top.Controls.Add(_methodCombo);
-        top.Controls.Add(MakeLabel("AI 강도"));
-        top.Controls.Add(_aiStrength);
-        top.Controls.Add(MakeLabel("Tile"));
-        top.Controls.Add(_tileCombo);
-        top.Controls.Add(MakeLabel("GPU"));
-        top.Controls.Add(_gpuCombo);
-        top.Controls.Add(MakeLabel("샤픈"));
-        top.Controls.Add(_sharpen);
-        top.Controls.Add(_processButton);
-        top.Controls.Add(_saveButton);
-        top.Controls.Add(_engineButton);
-        top.Controls.Add(_engineStatus);
+        var primaryRow = CreateToolbarRow();
+        primaryRow.Controls.Add(openButton);
+        primaryRow.Controls.Add(CreateSeparator());
+        AddField(primaryRow, "모드", _modeCombo);
+        AddField(primaryRow, "크기", _sizeCombo);
+        primaryRow.Controls.Add(_processButton);
+        primaryRow.Controls.Add(_saveButton);
+
+        var optionRow = CreateToolbarRow();
+        AddField(optionRow, "방식", _methodCombo);
+        AddField(optionRow, "샤픈", _sharpen);
+        optionRow.Controls.Add(CreateSeparator());
+        AddField(optionRow, "AI 강도", _aiStrength);
+        AddField(optionRow, "GPU", _gpuCombo);
+        AddField(optionRow, "Tile", _tileCombo);
+        optionRow.Controls.Add(_engineButton);
+        optionRow.Controls.Add(_engineStatus);
+
+        var toolbar = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1,
+            RowCount = 2,
+            Padding = new Padding(8, 7, 8, 5),
+            Margin = Padding.Empty
+        };
+        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        toolbar.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        toolbar.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        toolbar.Controls.Add(primaryRow, 0, 0);
+        toolbar.Controls.Add(optionRow, 0, 1);
 
         var split = new SplitContainer
         {
             Dock = DockStyle.Fill,
-            Orientation = Orientation.Vertical
+            Orientation = Orientation.Vertical,
+            SplitterWidth = 6,
+            Panel1MinSize = 260,
+            Panel2MinSize = 260
         };
 
         Shown += async (_, _) =>
         {
-            if (split.Width > split.SplitterWidth + 2)
-                split.SplitterDistance = (split.Width - split.SplitterWidth) / 2;
+            CenterSplitter(split);
             await RefreshGpuListAsync();
+        };
+        split.Resize += (_, _) =>
+        {
+            if (!split.IsSplitterFixed && split.Width > split.Panel1MinSize + split.Panel2MinSize + split.SplitterWidth)
+            {
+                double ratio = split.SplitterDistance / (double)Math.Max(1, split.Width - split.SplitterWidth);
+                if (ratio < 0.25 || ratio > 0.75) CenterSplitter(split);
+            }
         };
 
         split.Panel1.Controls.Add(BuildPreviewPanel("원본", _originalView, _originalZoomLabel));
@@ -155,11 +151,71 @@ internal sealed class MainForm : Form
         _status.Dock = DockStyle.Bottom;
         _status.Height = 30;
         _status.Padding = new Padding(10, 5, 10, 0);
+        _status.AutoEllipsis = true;
         _status.Text = "이미지를 열거나 창에 드래그하세요. 휠: 줌 · 드래그: 이동 · 더블클릭: Fit";
 
         Controls.Add(split);
         Controls.Add(_status);
-        Controls.Add(top);
+        Controls.Add(toolbar);
+    }
+
+    private static FlowLayoutPanel CreateToolbarRow() => new()
+    {
+        Dock = DockStyle.Fill,
+        AutoSize = true,
+        AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        FlowDirection = FlowDirection.LeftToRight,
+        WrapContents = true,
+        Margin = Padding.Empty,
+        Padding = new Padding(0, 2, 0, 2)
+    };
+
+    private static void ConfigureCombo(ComboBox combo, int width, object[] items)
+    {
+        combo.DropDownStyle = ComboBoxStyle.DropDownList;
+        combo.Width = width;
+        combo.Margin = new Padding(3, 3, 8, 3);
+        combo.Items.AddRange(items);
+        combo.SelectedIndex = 0;
+    }
+
+    private static void ConfigureNumeric(NumericUpDown numeric, decimal min, decimal max, decimal value, int width)
+    {
+        numeric.Minimum = min;
+        numeric.Maximum = max;
+        numeric.Value = value;
+        numeric.Width = width;
+        numeric.Margin = new Padding(3, 3, 8, 3);
+    }
+
+    private static void AddField(FlowLayoutPanel row, string labelText, Control control)
+    {
+        row.Controls.Add(new Label
+        {
+            Text = labelText,
+            AutoSize = true,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Margin = new Padding(7, 8, 1, 0)
+        });
+        row.Controls.Add(control);
+    }
+
+    private static Control CreateSeparator() => new Label
+    {
+        Text = "│",
+        AutoSize = true,
+        ForeColor = SystemColors.ControlDark,
+        Margin = new Padding(4, 8, 4, 0)
+    };
+
+    private static void CenterSplitter(SplitContainer split)
+    {
+        int available = split.Width - split.SplitterWidth;
+        if (available <= 0) return;
+        int target = available / 2;
+        int min = split.Panel1MinSize;
+        int max = Math.Max(min, available - split.Panel2MinSize);
+        split.SplitterDistance = Math.Clamp(target, min, max);
     }
 
     private void WirePreviewSync()
@@ -180,13 +236,6 @@ internal sealed class MainForm : Form
         _originalZoomLabel.Text = $"{_originalView.ZoomPercent}%";
         _resultZoomLabel.Text = $"{_resultView.ZoomPercent}%";
     }
-
-    private static Label MakeLabel(string text) => new()
-    {
-        Text = text,
-        AutoSize = true,
-        Margin = new Padding(10, 7, 3, 0)
-    };
 
     private static Control BuildPreviewPanel(string title, ZoomPanViewer viewer, Label zoomLabel)
     {
@@ -349,7 +398,7 @@ internal sealed class MainForm : Form
             _resultView.Fit(false);
             UpdateZoomLabels();
             _saveButton.Enabled = false;
-            _status.Text = $"{Path.GetFileName(path)}  ·  {_original.Width}×{_original.Height}";
+            _status.Text = $"{Path.GetFileName(path)} · {_original.Width}×{_original.Height}";
         }
         catch (Exception ex)
         {
