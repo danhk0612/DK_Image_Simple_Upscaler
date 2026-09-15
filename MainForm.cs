@@ -4,12 +4,20 @@ namespace DKImageSimpleUpscaler;
 
 internal sealed class MainForm : Form
 {
-    private readonly PictureBox _originalBox = new();
-    private readonly PictureBox _resultBox = new();
+    private sealed record GpuChoice(int? Id, string Label, string? DeviceName = null)
+    {
+        public override string ToString() => Label;
+    }
+
+    private readonly ZoomPanViewer _originalView = new();
+    private readonly ZoomPanViewer _resultView = new();
+    private readonly Label _originalZoomLabel = new();
+    private readonly Label _resultZoomLabel = new();
     private readonly ComboBox _modeCombo = new();
     private readonly ComboBox _sizeCombo = new();
     private readonly ComboBox _methodCombo = new();
     private readonly ComboBox _tileCombo = new();
+    private readonly ComboBox _gpuCombo = new();
     private readonly NumericUpDown _aiStrength = new();
     private readonly NumericUpDown _sharpen = new();
     private readonly Label _status = new();
@@ -17,10 +25,12 @@ internal sealed class MainForm : Form
     private readonly Button _processButton = new();
     private readonly Button _saveButton = new();
     private readonly Button _engineButton = new();
+    private readonly AppSettings _settings = AppSettings.Load();
 
     private Bitmap? _original;
     private Bitmap? _result;
     private string? _sourcePath;
+    private bool _loadingGpuList;
 
     public MainForm()
     {
@@ -34,6 +44,7 @@ internal sealed class MainForm : Form
 
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
         BuildUi();
+        WirePreviewSync();
         UpdateModeUi();
         UpdateEngineStatus();
     }
@@ -43,7 +54,7 @@ internal sealed class MainForm : Form
         var top = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 92,
+            Height = 118,
             Padding = new Padding(10),
             WrapContents = true,
             AutoSize = false
@@ -72,6 +83,12 @@ internal sealed class MainForm : Form
         _tileCombo.Width = 80;
         _tileCombo.Items.AddRange(["Auto", "128", "256", "512"]);
         _tileCombo.SelectedIndex = 0;
+
+        _gpuCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+        _gpuCombo.Width = 245;
+        _gpuCombo.Items.Add(new GpuChoice(null, "Auto (Real-ESRGAN 기본)"));
+        _gpuCombo.SelectedIndex = 0;
+        _gpuCombo.SelectedIndexChanged += (_, _) => SaveGpuSelection();
 
         _aiStrength.Minimum = 0;
         _aiStrength.Maximum = 100;
@@ -110,6 +127,8 @@ internal sealed class MainForm : Form
         top.Controls.Add(_aiStrength);
         top.Controls.Add(MakeLabel("Tile"));
         top.Controls.Add(_tileCombo);
+        top.Controls.Add(MakeLabel("GPU"));
+        top.Controls.Add(_gpuCombo);
         top.Controls.Add(MakeLabel("샤픈"));
         top.Controls.Add(_sharpen);
         top.Controls.Add(_processButton);
@@ -123,23 +142,43 @@ internal sealed class MainForm : Form
             Orientation = Orientation.Vertical
         };
 
-        Shown += (_, _) =>
+        Shown += async (_, _) =>
         {
             if (split.Width > split.SplitterWidth + 2)
                 split.SplitterDistance = (split.Width - split.SplitterWidth) / 2;
+            await RefreshGpuListAsync();
         };
 
-        split.Panel1.Controls.Add(BuildPreviewPanel("원본", _originalBox));
-        split.Panel2.Controls.Add(BuildPreviewPanel("결과", _resultBox));
+        split.Panel1.Controls.Add(BuildPreviewPanel("원본", _originalView, _originalZoomLabel));
+        split.Panel2.Controls.Add(BuildPreviewPanel("결과", _resultView, _resultZoomLabel));
 
         _status.Dock = DockStyle.Bottom;
         _status.Height = 30;
         _status.Padding = new Padding(10, 5, 10, 0);
-        _status.Text = "이미지를 열거나 창에 드래그하세요.";
+        _status.Text = "이미지를 열거나 창에 드래그하세요. 휠: 줌 · 드래그: 이동 · 더블클릭: Fit";
 
         Controls.Add(split);
         Controls.Add(_status);
         Controls.Add(top);
+    }
+
+    private void WirePreviewSync()
+    {
+        _originalView.ViewChanged += (_, _) => SyncView(_originalView, _resultView);
+        _resultView.ViewChanged += (_, _) => SyncView(_resultView, _originalView);
+        UpdateZoomLabels();
+    }
+
+    private void SyncView(ZoomPanViewer source, ZoomPanViewer target)
+    {
+        target.ApplyViewState(source.ViewState);
+        UpdateZoomLabels();
+    }
+
+    private void UpdateZoomLabels()
+    {
+        _originalZoomLabel.Text = $"{_originalView.ZoomPercent}%";
+        _resultZoomLabel.Text = $"{_resultView.ZoomPercent}%";
     }
 
     private static Label MakeLabel(string text) => new()
@@ -149,22 +188,29 @@ internal sealed class MainForm : Form
         Margin = new Padding(10, 7, 3, 0)
     };
 
-    private static Control BuildPreviewPanel(string title, PictureBox picture)
+    private static Control BuildPreviewPanel(string title, ZoomPanViewer viewer, Label zoomLabel)
     {
         var panel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8) };
+        var header = new Panel { Dock = DockStyle.Top, Height = 30 };
         var label = new Label
         {
             Text = title,
-            Dock = DockStyle.Top,
-            Height = 28,
+            Dock = DockStyle.Left,
+            AutoSize = false,
+            Width = 120,
             TextAlign = ContentAlignment.MiddleLeft,
             Font = new Font(SystemFonts.DefaultFont, FontStyle.Bold)
         };
-        picture.Dock = DockStyle.Fill;
-        picture.SizeMode = PictureBoxSizeMode.Zoom;
-        picture.BackColor = Color.FromArgb(32, 32, 32);
-        panel.Controls.Add(picture);
-        panel.Controls.Add(label);
+        zoomLabel.Dock = DockStyle.Right;
+        zoomLabel.Width = 80;
+        zoomLabel.TextAlign = ContentAlignment.MiddleRight;
+        zoomLabel.ForeColor = SystemColors.GrayText;
+        header.Controls.Add(label);
+        header.Controls.Add(zoomLabel);
+
+        viewer.Dock = DockStyle.Fill;
+        panel.Controls.Add(viewer);
+        panel.Controls.Add(header);
         return panel;
     }
 
@@ -174,6 +220,7 @@ internal sealed class MainForm : Form
         _methodCombo.Enabled = !aiMode;
         _aiStrength.Enabled = aiMode;
         _tileCombo.Enabled = aiMode;
+        _gpuCombo.Enabled = aiMode && AiEngineManager.IsInstalled && _gpuCombo.Items.Count > 0;
         _engineButton.Visible = aiMode || !AiEngineManager.IsInstalled;
         _sharpen.Value = aiMode ? 5 : 15;
     }
@@ -184,6 +231,66 @@ internal sealed class MainForm : Form
         _engineStatus.Text = installed ? "AI: 설치됨" : "AI: 미설치";
         _engineStatus.ForeColor = installed ? Color.DarkGreen : Color.DimGray;
         _engineButton.Text = installed ? "AI 엔진 재설치" : "AI 엔진 설치";
+        _gpuCombo.Enabled = installed && _modeCombo.SelectedIndex > 0;
+    }
+
+    private async Task RefreshGpuListAsync()
+    {
+        _loadingGpuList = true;
+        try
+        {
+            _gpuCombo.Items.Clear();
+            _gpuCombo.Items.Add(new GpuChoice(null, "Auto (Real-ESRGAN 기본)"));
+            _gpuCombo.SelectedIndex = 0;
+
+            if (!AiEngineManager.IsInstalled)
+            {
+                _gpuCombo.Enabled = false;
+                return;
+            }
+
+            _gpuCombo.Enabled = false;
+            _status.Text = "Vulkan GPU 검색 중…";
+            IReadOnlyList<GpuDeviceInfo> gpus = await AiEngineManager.DetectGpusAsync();
+            foreach (var gpu in gpus)
+                _gpuCombo.Items.Add(new GpuChoice(gpu.Id, gpu.ToString(), gpu.Name));
+
+            int restoreIndex = 0;
+            if (_settings.GpuId.HasValue)
+            {
+                for (int i = 1; i < _gpuCombo.Items.Count; i++)
+                {
+                    if (_gpuCombo.Items[i] is GpuChoice choice && choice.Id == _settings.GpuId &&
+                        (string.IsNullOrWhiteSpace(_settings.GpuName) || choice.DeviceName == _settings.GpuName))
+                    {
+                        restoreIndex = i;
+                        break;
+                    }
+                }
+            }
+            _gpuCombo.SelectedIndex = restoreIndex;
+            _status.Text = gpus.Count > 0
+                ? $"GPU {gpus.Count}개 감지 · 선택: {_gpuCombo.SelectedItem}"
+                : "Vulkan GPU를 자동 감지하지 못했습니다. Auto로 실행합니다.";
+        }
+        catch (Exception ex)
+        {
+            _gpuCombo.SelectedIndex = 0;
+            _status.Text = $"GPU 검색 실패 · Auto 사용 · {ex.Message}";
+        }
+        finally
+        {
+            _loadingGpuList = false;
+            _gpuCombo.Enabled = AiEngineManager.IsInstalled && _modeCombo.SelectedIndex > 0;
+        }
+    }
+
+    private void SaveGpuSelection()
+    {
+        if (_loadingGpuList || _gpuCombo.SelectedItem is not GpuChoice choice) return;
+        _settings.GpuId = choice.Id;
+        _settings.GpuName = choice.DeviceName;
+        try { _settings.Save(); } catch { }
     }
 
     private async Task InstallEngineAsync()
@@ -200,6 +307,7 @@ internal sealed class MainForm : Form
             var progress = new Progress<string>(text => _status.Text = text);
             await AiEngineManager.InstallAsync(progress);
             UpdateEngineStatus();
+            await RefreshGpuListAsync();
             _status.Text = "AI 엔진 설치 완료";
         }
         catch (Exception ex)
@@ -235,8 +343,11 @@ internal sealed class MainForm : Form
             _original = bitmap;
             _result = null;
             _sourcePath = path;
-            _originalBox.Image = _original;
-            _resultBox.Image = null;
+            _originalView.Image = _original;
+            _resultView.Image = null;
+            _originalView.Fit(false);
+            _resultView.Fit(false);
+            UpdateZoomLabels();
             _saveButton.Enabled = false;
             _status.Text = $"{Path.GetFileName(path)}  ·  {_original.Width}×{_original.Height}";
         }
@@ -267,8 +378,12 @@ internal sealed class MainForm : Form
 
         var (width, height) = GetTargetSize(_original.Width, _original.Height, _sizeCombo.SelectedItem?.ToString() ?? "2×");
         int sharpen = (int)_sharpen.Value;
+        var gpuChoice = _gpuCombo.SelectedItem as GpuChoice ?? new GpuChoice(null, "Auto (Real-ESRGAN 기본)");
+        string gpuText = gpuChoice.Id.HasValue ? gpuChoice.DeviceName ?? $"GPU {gpuChoice.Id}" : "Auto";
 
-        SetBusy(true, $"처리 중… {_original.Width}×{_original.Height} → {width}×{height}");
+        SetBusy(true, aiMode
+            ? $"처리 중… {_original.Width}×{_original.Height} → {width}×{height} · GPU: {gpuText}"
+            : $"처리 중… {_original.Width}×{_original.Height} → {width}×{height}");
         try
         {
             using var source = (Bitmap)_original.Clone();
@@ -289,9 +404,9 @@ internal sealed class MainForm : Form
                 var model = _modeCombo.SelectedIndex == 2 ? AiModel.Anime : AiModel.General;
                 int tile = _tileCombo.SelectedIndex switch { 1 => 128, 2 => 256, 3 => 512, _ => 0 };
                 int aiStrength = (int)_aiStrength.Value;
-                var progress = new Progress<string>(text => _status.Text = text);
+                var progress = new Progress<string>(text => _status.Text = $"{text} · GPU: {gpuText}");
 
-                using var ai4x = await AiEngineManager.UpscaleAsync(source, model, tile, progress);
+                using var ai4x = await AiEngineManager.UpscaleAsync(source, model, tile, gpuChoice.Id, progress);
                 using var aiTarget = ai4x.Width == width && ai4x.Height == height
                     ? (Bitmap)ai4x.Clone()
                     : ImageProcessor.Resize(ai4x, width, height, ResizeMethod.Lanczos3);
@@ -310,10 +425,14 @@ internal sealed class MainForm : Form
             ImageProcessor.SharpenInPlace(processed, sharpen);
             _result?.Dispose();
             _result = processed;
-            _resultBox.Image = _result;
+            _resultView.Image = _result;
+            _resultView.ApplyViewState(_originalView.ViewState);
+            UpdateZoomLabels();
             _saveButton.Enabled = true;
             string modeText = _modeCombo.SelectedItem?.ToString() ?? "Text/UI Safe";
-            _status.Text = $"완료  ·  {width}×{height}  ·  {modeText}  ·  샤픈 {sharpen}";
+            _status.Text = aiMode
+                ? $"완료 · {width}×{height} · {modeText} · GPU: {gpuText} · 샤픈 {sharpen}"
+                : $"완료 · {width}×{height} · {modeText} · 샤픈 {sharpen}";
         }
         catch (Exception ex)
         {
@@ -361,7 +480,7 @@ internal sealed class MainForm : Form
         string ext = Path.GetExtension(dialog.FileName).ToLowerInvariant();
         if (ext is ".jpg" or ".jpeg") SaveJpeg(_result, dialog.FileName, 95L);
         else _result.Save(dialog.FileName, ImageFormat.Png);
-        _status.Text = $"저장 완료  ·  {dialog.FileName}";
+        _status.Text = $"저장 완료 · {dialog.FileName}";
     }
 
     private static void SaveJpeg(Bitmap bitmap, string path, long quality)
@@ -380,6 +499,7 @@ internal sealed class MainForm : Form
         _modeCombo.Enabled = !busy;
         _methodCombo.Enabled = !busy && _modeCombo.SelectedIndex == 0;
         _tileCombo.Enabled = !busy && _modeCombo.SelectedIndex > 0;
+        _gpuCombo.Enabled = !busy && _modeCombo.SelectedIndex > 0 && AiEngineManager.IsInstalled;
         _aiStrength.Enabled = !busy && _modeCombo.SelectedIndex > 0;
         _sharpen.Enabled = !busy;
         _engineButton.Enabled = !busy;
