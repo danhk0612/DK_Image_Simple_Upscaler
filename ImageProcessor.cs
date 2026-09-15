@@ -265,20 +265,23 @@ internal static class ImageProcessor
         byte[] safeBytes = ReadBytes(safe, out int safeStride);
         byte[] aiBytes = ReadBytes(ai, out int aiStride);
 
-        var output = new Bitmap(safe.Width, safe.Height, PixelFormat.Format32bppArgb);
-        var rect = new Rectangle(0, 0, output.Width, output.Height);
+        int width = safe.Width;
+        int height = safe.Height;
+        var output = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+        var rect = new Rectangle(0, 0, width, height);
         var data = output.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
         try
         {
-            var bytes = new byte[Math.Abs(data.Stride) * output.Height];
+            int outputStride = data.Stride;
+            var bytes = new byte[Math.Abs(outputStride) * height];
             double safeWeight = 1.0 - aiWeight;
-            Parallel.For(0, output.Height, y =>
+            Parallel.For(0, height, y =>
             {
-                for (int x = 0; x < output.Width; x++)
+                for (int x = 0; x < width; x++)
                 {
                     int ps = y * safeStride + x * 4;
                     int pa = y * aiStride + x * 4;
-                    int po = y * data.Stride + x * 4;
+                    int po = y * outputStride + x * 4;
                     for (int ch = 0; ch < 4; ch++)
                         bytes[po + ch] = ClampByte(safeBytes[ps + ch] * safeWeight + aiBytes[pa + ch] * aiWeight);
                 }
