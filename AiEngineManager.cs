@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Net.Http;
+using System.Text.RegularExpressions;
 
 namespace DKImageSimpleUpscaler;
 
@@ -10,10 +11,16 @@ internal enum AiModel
     Anime
 }
 
+internal sealed record GpuDeviceInfo(int Id, string Name)
+{
+    public override string ToString() => $"GPU {Id} · {Name}";
+}
+
 internal static class AiEngineManager
 {
     private const string EngineVersion = "v0.2.5.0";
     private const string EngineArchiveUrl = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip";
+    private static readonly Regex GpuLineRegex = new(@"^\[(\d+)\s+(.+?)\](?:\s|$)", RegexOptions.Compiled);
 
     internal static string EngineRoot => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -37,7 +44,7 @@ internal static class AiEngineManager
         {
             progress?.Report("Real-ESRGAN AI 엔진 다운로드 중…");
             using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
-            client.DefaultRequestHeaders.UserAgent.ParseAdd("DKImageSimpleUpscaler/0.2");
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("DKImageSimpleUpscaler/0.3");
             using var response = await client.GetAsync(EngineArchiveUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             response.EnsureSuccessStatusCode();
 
@@ -81,10 +88,72 @@ internal static class AiEngineManager
         }
     }
 
+    internal static async Task<IReadOnlyList<GpuDeviceInfo>> DetectGpusAsync(CancellationToken cancellationToken = default)
+    {
+        string exe = FindExecutable() ?? throw new FileNotFoundException("AI 엔진이 설치되어 있지 않습니다.");
+        string workingDirectory = Path.GetDirectoryName(exe)!;
+        string tempDirectory = Path.Combine(Path.GetTempPath(), $"DKImageSimpleUpscaler-GpuProbe-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDirectory);
+        string inputPath = Path.Combine(tempDirectory, "probe.png");
+        string outputPath = Path.Combine(tempDirectory, "probe-out.png");
+
+        using (var probe = new Bitmap(2, 2))
+        {
+            using var g = Graphics.FromImage(probe);
+            g.Clear(Color.Black);
+            probe.Save(inputPath, System.Drawing.Imaging.ImageFormat.Png);
+        }
+
+        var found = new Dictionary<int, string>();
+        object gate = new();
+        void ParseLine(string? line)
+        {
+            if (string.IsNullOrWhiteSpace(line)) return;
+            var match = GpuLineRegex.Match(line.Trim());
+            if (!match.Success || !int.TryParse(match.Groups[1].Value, out int id)) return;
+            string name = match.Groups[2].Value.Trim();
+            lock (gate) found[id] = name;
+        }
+
+        try
+        {
+            var startInfo = CreateStartInfo(exe, workingDirectory);
+            startInfo.ArgumentList.Add("-i");
+            startInfo.ArgumentList.Add(inputPath);
+            startInfo.ArgumentList.Add("-o");
+            startInfo.ArgumentList.Add(outputPath);
+            startInfo.ArgumentList.Add("-n");
+            startInfo.ArgumentList.Add("realesr-animevideov3");
+            startInfo.ArgumentList.Add("-s");
+            startInfo.ArgumentList.Add("2");
+            startInfo.ArgumentList.Add("-t");
+            startInfo.ArgumentList.Add("32");
+            startInfo.ArgumentList.Add("-f");
+            startInfo.ArgumentList.Add("png");
+            startInfo.ArgumentList.Add("-v");
+
+            using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+            process.OutputDataReceived += (_, e) => ParseLine(e.Data);
+            process.ErrorDataReceived += (_, e) => ParseLine(e.Data);
+            if (!process.Start()) return [];
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            await process.WaitForExitAsync(cancellationToken);
+
+            lock (gate)
+                return found.OrderBy(x => x.Key).Select(x => new GpuDeviceInfo(x.Key, x.Value)).ToArray();
+        }
+        finally
+        {
+            TryDeleteDirectory(tempDirectory);
+        }
+    }
+
     internal static async Task<Bitmap> UpscaleAsync(
         Bitmap source,
         AiModel model,
         int tileSize,
+        int? gpuId,
         IProgress<string>? progress = null,
         CancellationToken cancellationToken = default)
     {
@@ -100,15 +169,7 @@ internal static class AiEngineManager
         try
         {
             string modelName = model == AiModel.Anime ? "realesrgan-x4plus-anime" : "realesrgan-x4plus";
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = exe,
-                WorkingDirectory = workingDirectory,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
+            var startInfo = CreateStartInfo(exe, workingDirectory);
             startInfo.ArgumentList.Add("-i");
             startInfo.ArgumentList.Add(inputPath);
             startInfo.ArgumentList.Add("-o");
@@ -123,6 +184,11 @@ internal static class AiEngineManager
             {
                 startInfo.ArgumentList.Add("-t");
                 startInfo.ArgumentList.Add(tileSize.ToString());
+            }
+            if (gpuId.HasValue)
+            {
+                startInfo.ArgumentList.Add("-g");
+                startInfo.ArgumentList.Add(gpuId.Value.ToString());
             }
 
             using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
@@ -148,6 +214,16 @@ internal static class AiEngineManager
             TryDeleteDirectory(tempDirectory);
         }
     }
+
+    private static ProcessStartInfo CreateStartInfo(string exe, string workingDirectory) => new()
+    {
+        FileName = exe,
+        WorkingDirectory = workingDirectory,
+        UseShellExecute = false,
+        CreateNoWindow = true,
+        RedirectStandardOutput = true,
+        RedirectStandardError = true
+    };
 
     private static void CopyDirectory(string source, string destination)
     {
