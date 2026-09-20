@@ -11,10 +11,27 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - name: Restore
-        run: dotnet restore
-      - name: Build
-        run: dotnet build -c Release --no-restore
+
+      - name: Build distribution
+        shell: pwsh
+        run: .\build.ps1
+
+      - name: Validate distribution
+        shell: pwsh
+        run: |
+          $expected = @(
+            'DKImageSimpleUpscaler.exe',
+            'DKImageSimpleUpscaler.App.exe'
+          )
+          $actual = Get-ChildItem .\dist -File | Select-Object -ExpandProperty Name | Sort-Object
+          $missing = $expected | Where-Object { $_ -notin $actual }
+          if ($missing.Count -gt 0) {
+            throw "Missing distribution files: $($missing -join ', ')"
+          }
+          if ($actual.Count -ne 2) {
+            throw "Unexpected files in dist: $($actual -join ', ')"
+          }

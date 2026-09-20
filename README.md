@@ -24,6 +24,23 @@ AI 모드는 내부적으로 4× AI 복원 후 목표 크기에 맞춰 Lanczos�
 - PNG 또는 JPEG(품질 95) 저장
 - AI 엔진 자동 설치
 
+## 다운로드 및 실행
+
+GitHub Releases의 `DKImageSimpleUpscaler-win-x64.zip`을 내려받아 원하는 폴더에 압축을 풀고 다음 파일을 실행합니다.
+
+```text
+DKImageSimpleUpscaler.exe
+```
+
+배포 폴더에는 두 실행 파일이 함께 있어야 합니다.
+
+```text
+DKImageSimpleUpscaler.exe       ← .NET 런타임 확인용 네이티브 런처
+DKImageSimpleUpscaler.App.exe   ← 실제 업스케일러
+```
+
+실제 앱은 **Microsoft .NET 8 Desktop Runtime (x64)**을 사용하는 Framework-dependent Single-file 방식입니다. 런타임이 설치되어 있지 않으면 런처가 한국어 안내를 표시하고 Microsoft 공식 .NET 8 다운로드 페이지를 열 수 있습니다. 런타임 자체는 배포 ZIP에 포함하지 않습니다.
+
 ## 권장 설정
 
 ### UI, 문서 캡처, 한글/영문 글자가 많은 이미지
@@ -54,19 +71,28 @@ AI 기능은 공식 [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN)의 Win
 
 - 고정 패키지: Real-ESRGAN `v0.2.5.0` Windows NCNN/Vulkan
 - 설치 위치: `%LOCALAPPDATA%\DKImageSimpleUpscaler\AI\RealESRGAN\v0.2.5.0`
-- 프로그램 저장소에는 AI 실행 파일이나 모델을 포함하지 않습니다.
+- 프로그램 저장소와 배포 ZIP에는 AI 실행 파일이나 모델을 포함하지 않습니다.
 - Real-ESRGAN / Real-ESRGAN-ncnn-vulkan의 각 라이선스는 원 프로젝트를 따릅니다.
 
 ## 빌드
 
-Windows에 .NET 8 SDK가 설치되어 있다면 PowerShell에서:
+전체 배포물을 로컬에서 만들려면 다음이 필요합니다.
+
+- .NET 8 SDK
+- Visual Studio 2022 C++ Build Tools (MSVC x64)
+
+PowerShell에서:
 
 ```powershell
 .\build.ps1
 ```
 
-단일 실행 파일 생성 위치:
+생성 결과:
 
 ```text
-bin\Release\net8.0-windows\win-x64\publish\DKImageSimpleUpscaler.exe
+dist\
+├─ DKImageSimpleUpscaler.exe
+└─ DKImageSimpleUpscaler.App.exe
 ```
+
+GitHub Actions의 릴리스 워크플로도 같은 `build.ps1`을 사용하므로 로컬 빌드와 릴리스 패키지 구조가 동일합니다.
