@@ -50,7 +50,7 @@ call "$vsDevCmd" -arch=x64 -host_arch=x64
 if errorlevel 1 exit /b %errorlevel%
 rc.exe /nologo /fo "launcher\launcher.res" "launcher\launcher.rc"
 if errorlevel 1 exit /b %errorlevel%
-cl.exe /nologo /std:c++17 /EHsc /O2 /utf-8 "launcher\launcher.cpp" "launcher\launcher.res" /link /SUBSYSTEM:WINDOWS /OUT:"dist\DKImageSimpleUpscaler.exe" Advapi32.lib Shell32.lib
+cl.exe /nologo /std:c++17 /EHsc /O2 /utf-8 "launcher\launcher.cpp" "launcher\launcher.res" /link /SUBSYSTEM:WINDOWS /OUT:"dist\DKImageSimpleUpscaler.exe" Advapi32.lib Shell32.lib User32.lib
 exit /b %errorlevel%
 "@
 
